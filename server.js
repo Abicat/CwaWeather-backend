@@ -16,7 +16,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 /**
- * 取得高雄天氣預報
+ * 取得新北市天氣預報（36小時）
  * CWA 氣象資料開放平臺 API
  * 使用「一般天氣預報-今明 36 小時天氣預報」資料集
  */
@@ -31,7 +31,6 @@ const getKaohsiungWeather = async (req, res) => {
     }
 
     // 呼叫 CWA API - 一般天氣預報（36小時）
-    // API 文件: https://opendata.cwa.gov.tw/dist/opendata-swagger.html
     const response = await axios.get(
       `${CWA_API_BASE_URL}/v1/rest/datastore/F-C0032-001`,
       {
@@ -151,8 +150,27 @@ const getWeeklyWeather = async (req, res) => {
       }
     );
 
-    // 取得新北市的天氣資料
-    const locations = response.data.records.locations[0].location;
+    console.log("CWA API Response:", JSON.stringify(response.data, null, 2));
+
+    // 檢查回應資料結構
+    if (!response.data || !response.data.records) {
+      return res.status(500).json({
+        error: "資料格式錯誤",
+        message: "API 回應格式不正確",
+      });
+    }
+
+    const records = response.data.records;
+
+    // 檢查 locations 陣列
+    if (!records.locations || records.locations.length === 0) {
+      return res.status(404).json({
+        error: "查無資料",
+        message: "無法取得新北市一週天氣資料",
+      });
+    }
+
+    const locations = records.locations[0].location;
 
     if (!locations || locations.length === 0) {
       return res.status(404).json({
@@ -164,7 +182,7 @@ const getWeeklyWeather = async (req, res) => {
     // 整理所有區域的天氣資料
     const weatherData = {
       city: "新北市",
-      updateTime: response.data.records.datasetDescription,
+      updateTime: records.datasetDescription || new Date().toISOString(),
       locations: [],
     };
 
@@ -177,19 +195,25 @@ const getWeeklyWeather = async (req, res) => {
 
       const weatherElements = location.weatherElement;
 
-      // 找到「天氣現象」的資料
+      // 找到「天氣現象」的資料 (Wx)
       const weatherElement = weatherElements.find(
-        (el) => el.elementName === "天氣現象"
+        (el) => el.elementName === "Wx"
       );
 
       if (weatherElement && weatherElement.time) {
         weatherElement.time.forEach((timeData) => {
-          const elementValue = timeData.elementValue[0];
+          // elementValue 是陣列，取第一個元素
+          const elementValue = timeData.elementValue
+            ? timeData.elementValue[0]
+            : null;
 
           locationInfo.forecasts.push({
             startTime: timeData.startTime,
             endTime: timeData.endTime,
-            weather: elementValue.value || "資料不足",
+            weather:
+              elementValue && elementValue.value
+                ? elementValue.value
+                : "資料不足",
           });
         });
       }
@@ -203,6 +227,10 @@ const getWeeklyWeather = async (req, res) => {
     });
   } catch (error) {
     console.error("取得一週天氣資料失敗:", error.message);
+    console.error(
+      "Error details:",
+      error.response ? error.response.data : error
+    );
 
     if (error.response) {
       // API 回應錯誤
@@ -217,6 +245,7 @@ const getWeeklyWeather = async (req, res) => {
     res.status(500).json({
       error: "伺服器錯誤",
       message: "無法取得一週天氣資料，請稍後再試",
+      details: error.message,
     });
   }
 };
@@ -237,7 +266,7 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "OK", timestamp: new Date().toISOString() });
 });
 
-// 取得高雄天氣預報
+// 取得新北市天氣預報（36小時）
 app.get("/api/weather/kaohsiung", getKaohsiungWeather);
 
 // 取得新北市一週天氣預報
